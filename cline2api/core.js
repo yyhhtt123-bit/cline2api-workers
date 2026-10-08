@@ -92,6 +92,8 @@ export function getConfig(env) {
     fallbackToDefault: readEnv(env, "FALLBACK_TO_DEFAULT").toLowerCase() !== "false",
     minMaxTokens: Number.isFinite(minMaxTokens) && minMaxTokens > 0 ? minMaxTokens : 100,
     maxConcurrent: Number.isFinite(maxConcurrent) && maxConcurrent > 0 ? maxConcurrent : 8,
+    // /v1/models 默认公开（方便 GUI 校验），设为 true 则一并要求 API_KEY
+    protectModels: readEnv(env, "PROTECT_MODELS").toLowerCase() === "true",
   };
 }
 
@@ -1077,7 +1079,14 @@ export async function handleRequest(request, env) {
 
   try {
     if (request.method === "GET" && HEALTH_PATHS.has(path)) return await handleHealth(env);
-    if (request.method === "GET" && MODEL_PATHS.has(path)) return await handleModels(env, url);
+    if (request.method === "GET" && MODEL_PATHS.has(path)) {
+      const cfg = getConfig(env);
+      if (cfg.protectModels) {
+        const authErr = checkAuth(request, cfg);
+        if (authErr) return authErr;
+      }
+      return await handleModels(env, url);
+    }
     if (request.method === "POST" && CHAT_PATHS.has(path)) return await handleChatCompletions(request, env);
     if (request.method === "POST" && MESSAGE_PATHS.has(path)) return await handleMessages(request, env);
     if (request.method === "GET" && (path === "/" || path === "/v1")) {
