@@ -1,0 +1,14 @@
+{
+  "name": "cline2api",
+  "version": "2.0.0",
+  "description": "把 cline.bot 的免费模型额度转成 OpenAI / Anthropic 兼容 API（零依赖，Node 与 Cloudflare Workers 双入口）",
+  "type": "module",
+  "main": "core.js",
+  "scripts": {
+    "start": "node server.js",
+    "token": "node get-token.js",
+    "test": "bash test/smoke.sh"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}

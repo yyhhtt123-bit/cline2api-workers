@@ -1,0 +1,7 @@
+name = "cline2api"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# 机密变量用命令行设置，不要写在这里：
+#   npx wrangler secret put CLINE_REFRESH_TOKEN
+#   npx wrangler secret put API_KEY
