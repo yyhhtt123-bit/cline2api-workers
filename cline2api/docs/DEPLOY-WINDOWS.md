@@ -166,6 +166,9 @@ wrangler secret put CLINE_REFRESH_TOKEN    # 粘贴 token 回车
 wrangler secret put API_KEY
 ```
 
+> ⚠️ **在 `wrangler secret put` 的提示符下，cmd 的 `Ctrl+V` 经常无效**（看着像是粘了，其实存了空值）。
+> 用 **右键粘贴** 或 Windows Terminal 的 `Ctrl+Shift+V`。存完用 `check-deploy.bat` 验一下 `accounts` 是不是 1。
+
 > ⚠️ `*.workers.dev` 域名对非浏览器 UA 返回 `error code: 1010`，客户端要带浏览器 UA；受不了就用下面的 Vercel 或干脆跑本机。
 
 ### Vercel（免费，不挑 UA）

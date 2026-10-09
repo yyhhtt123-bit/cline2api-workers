@@ -624,6 +624,12 @@ export async function handleHealth(env) {
     fallback_to_default: cfg.fallbackToDefault,
     min_max_tokens: cfg.minMaxTokens,
     accounts: pool.length,
+    // 诊断用：只看有没有、多长，绝不回显 token 本身
+    refresh_token: {
+      configured: parseRefreshTokens(env).length > 0,
+      count: parseRefreshTokens(env).length,
+      first_length: (parseRefreshTokens(env)[0] || "").length,
+    },
     upstream,
   });
 }

@@ -7,8 +7,11 @@
   "scripts": {
     "start": "node server.js",
     "token": "node get-token.js",
-    "test": "bash test/smoke.sh"
+    "test": "bash test/smoke.sh",
+    "bundle": "wrangler deploy --dry-run --outdir=dist && mv dist/worker.js dist/worker.bundle.js"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT"
 }
