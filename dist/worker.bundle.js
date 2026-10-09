@@ -3,10 +3,9 @@ var __name = (target, value) => __defProp(target, "name", { value, configurable:
 
 // core.js
 var VERSION = "2.0.0";
-var DEFAULT_MODEL_ID = "cline-cloud/deepseek-v4.1-flash";
+var DEFAULT_MODEL_ID = "cline-free/mimo-v2.6-flash";
 var DEFAULT_API_BASE = "https://api.cline.bot/api/v1";
 var BUILTIN_MODELS = [
-  { id: "cline-cloud/deepseek-v4.1-flash", tier: "cloud", usable: true },
   { id: "cline-free/mimo-v2.6-flash", tier: "free", usable: true },
   { id: "cline-free/muse-spark-1.3-contributor", tier: "free", usable: true },
   { id: "cline-free/step-5-preview", tier: "free", usable: true },
@@ -45,7 +44,11 @@ function getConfig(env) {
     minMaxTokens: Number.isFinite(minMaxTokens) && minMaxTokens > 0 ? minMaxTokens : 100,
     maxConcurrent: Number.isFinite(maxConcurrent) && maxConcurrent > 0 ? maxConcurrent : 8,
     // /v1/models 默认公开（方便 GUI 校验），设为 true 则一并要求 API_KEY
-    protectModels: readEnv(env, "PROTECT_MODELS").toLowerCase() === "true"
+    protectModels: readEnv(env, "PROTECT_MODELS").toLowerCase() === "true",
+    // cline-cloud/* 仅产品面可用：请求它时自动降级到免费层模型
+    cloudFallback: readEnv(env, "CLOUD_FALLBACK").toLowerCase() !== "false",
+    // 直接使用 Cline API Key（app.cline.bot → Settings → API Keys），与 refreshToken 二选一
+    directApiKey: readEnv(env, "CLINE_API_KEY")
   };
 }
 __name(getConfig, "getConfig");
@@ -155,8 +158,12 @@ async function getModels(env, force = false) {
     if (!resp.ok) throw new Error("http_" + resp.status);
     const data = await resp.json();
     const list = [
-      ...mapTier(data.clineCloud, "cloud", true),
+      // 顺序即优先级：免费层（账号 token 实测可用）排最前，产品面专用层其次
       ...mapTier(data.free, "free", true),
+      ...mapTier(data.clineCloud, "cloud", false).map((m) => ({
+        ...m,
+        note: "\u4EC5 Cline \u4EA7\u54C1\u9762\u53EF\u7528\uFF1B\u8D26\u53F7 token \u8C03\u7528\u8FD4\u56DE 403 not supported"
+      })),
       ...mapTier(data.clinePass, "pass", false),
       ...mapTier(data.recommended, "paid", true)
     ];
@@ -174,7 +181,10 @@ __name(getModels, "getModels");
 async function resolveModel(env, requested) {
   const cfg = getConfig(env);
   const req = (requested || "").trim();
-  if (!req) return { upstream: cfg.defaultModel, tier: "cloud" };
+  if (!req) return { upstream: cfg.defaultModel, tier: "free" };
+  if (cfg.cloudFallback && req.startsWith("cline-cloud/")) {
+    return { upstream: cfg.defaultModel, tier: "free", cloudFallback: true };
+  }
   const models = await getModels(env);
   const exact = models.find((m) => m.id === req);
   if (exact) return { upstream: exact.id, tier: exact.tier, usable: exact.usable };
@@ -202,7 +212,9 @@ function upstreamHeaders(accessToken, sessionId, env) {
     "X-CORE-VERSION": coreVersion
   };
   if (sessionId) headers["X-Task-ID"] = sessionId;
-  if (accessToken) headers.Authorization = "Bearer workos:" + accessToken;
+  const directKey = readEnv(env, "CLINE_API_KEY");
+  if (directKey) headers.Authorization = "Bearer " + directKey;
+  else if (accessToken) headers.Authorization = "Bearer workos:" + accessToken;
   return headers;
 }
 __name(upstreamHeaders, "upstreamHeaders");
@@ -225,7 +237,7 @@ function sanitizeBody(body, cfg, notes) {
 }
 __name(sanitizeBody, "sanitizeBody");
 async function clineFetchOnce(env, cfg, body, sessionId, attempt = 0) {
-  const account = pickAccount(env, cfg);
+  const account = cfg.directApiKey ? null : pickAccount(env, cfg);
   let token = null;
   if (account) {
     try {

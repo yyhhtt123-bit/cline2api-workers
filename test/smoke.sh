@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 PORT="${1:-8799}"
 BASE="http://127.0.0.1:$PORT"
-MODEL="cline-cloud/deepseek-v4.1-flash"
+MODEL="cline-free/mimo-v2.6-flash"
 PASS=0; FAIL=0
 
 ok()  { echo "  ✅ $1"; PASS=$((PASS+1)); }
@@ -25,7 +25,7 @@ H=$(curl -s --max-time 30 "$BASE/v1/health")
 check "health ok"          "$(echo "$H" | jget d'["ok"]')" "True"
 check "上游可达"            "$(echo "$H" | jget d'["upstream"]["reachable"]')" "True"
 check "默认模型正确"        "$(echo "$H" | jget d'["default_model"]')" "$MODEL"
-check "cloud 层含默认模型"  "$(echo "$H" | jget d'["upstream"]["tiers"]["cloud"][0]')" "$MODEL"
+check "free 层含默认模型"   "$(echo "$H" | jget d'["upstream"]["tiers"]["free"][0]')" "$MODEL"
 echo "     free 层: $(echo "$H" | jget d'["upstream"]["tiers"]["free"]')"
 
 echo "=== 2. /v1/models ==="
