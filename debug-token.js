@@ -62,9 +62,12 @@ const body = JSON.stringify({
   stream: false,
 });
 
-async function probe(label, headers) {
+async function probe(label, headers, modelOverride) {
+  const payload = modelOverride
+    ? JSON.stringify({ model: modelOverride, messages: [{ role: "user", content: "say ok" }], stream: false })
+    : body;
   try {
-    const resp = await fetch(API + "/chat/completions", { method: "POST", headers, body });
+    const resp = await fetch(API + "/chat/completions", { method: "POST", headers, body: payload });
     const text = await resp.text();
     console.log(`\n--- ${label}`);
     console.log(`    HTTP ${resp.status}`);
@@ -121,9 +124,19 @@ async function main() {
     Authorization: "Bearer workos:" + accessToken,
   });
   await probe("D. 官方完整头 + 完全不带 Authorization（对照）", officialHeaders(sessionId));
+  await probe("E. 官方完整头 + workos: + 标准模型 anthropic/claude-sonnet-5.5（测 token 本身有没有效）", {
+    ...officialHeaders(sessionId),
+    Authorization: "Bearer workos:" + accessToken,
+  }, "anthropic/claude-sonnet-5.5");
+  await probe("F. 官方完整头 + workos: + cline-free/mimo-v2.6-flash（另一免费层模型）", {
+    ...officialHeaders(sessionId),
+    Authorization: "Bearer workos:" + accessToken,
+  }, "cline-free/mimo-v2.6-flash");
 
   console.log("\n③ 判读方法：");
   console.log("   A=200            → 头与鉴权都对，问题在别处（比如 Worker 里 token 没存对）");
+  console.log("   A=403 E=200/402  → token 有效，但 cline-cloud 模型不允许用账号 token 调（换 cline-free/* 或改用 API Key）");
+  console.log("   A=403 F=200      → 那就把默认模型换成 cline-free/* 的，我改代码");
   console.log("   A=403 B=200      → 应该去掉 workos: 前缀，告诉我，我改代码");
   console.log("   A=403 C=200      → 头集合要求不同，告诉我，我调头");
   console.log("   A/B/C 全 403     → 账号/额度层面被拒（把原文贴给我）");
