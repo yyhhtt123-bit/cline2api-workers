@@ -493,6 +493,8 @@ async function handleHealth(env) {
     version: VERSION,
     default_model: cfg.defaultModel,
     auth: cfg.apiKey === "" ? "disabled(open)" : "api_key",
+    api_key_configured: cfg.apiKey !== "",
+    api_key_length: cfg.apiKey.length,
     fallback_to_default: cfg.fallbackToDefault,
     min_max_tokens: cfg.minMaxTokens,
     accounts: pool.length,
