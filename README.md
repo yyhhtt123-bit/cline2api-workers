@@ -226,6 +226,7 @@ vercel --prod          # 改完环境变量必须重新部署才生效
 
 | 现象 | 原因 / 处理 |
 |---|---|
+| `403 This request is not supported` | 上游认为请求不是官方客户端发的：**头集合不完整或版本号太旧**。本项目已按官方源码（`cline/cline` → `sdk/packages/llms/src/providers/request-headers.ts`）发送完整头（`Cline/3.0.70` + `HTTP-Referer`/`X-Title`/`X-IS-MULTIROOT`/`X-CLIENT-VERSION`/`X-PLATFORM`/`X-CORE-VERSION`/`X-Task-ID`）。用 `node debug-token.js` 可逐组合定位；版本可用 `CLINE_CLIENT_VERSION` / `CLINE_CORE_VERSION` 覆盖 |
 | `403 only available via Cline product surfaces` | 少了 `X-CLIENT-TYPE: cline-sdk`。本项目的上游请求头已内置，若你自己改过代码请补回 |
 | `500 empty response content` | 请求的 `max_tokens` 太小（reasoning 吃光预算）。v2 已自动丢弃过小值；若手动调小了 `MIN_MAX_TOKENS` 就会重现 |
 | `429 Daily free limit reached` / `Try again in 2h 51m` | 该账号当日免费额度用完。多账号（`CLINE_REFRESH_TOKEN` 多行）会自动切号，全部冷却时直接返回上游响应 |
