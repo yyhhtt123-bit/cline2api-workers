@@ -1,7 +1,7 @@
 # cline2api v2
 
 把 [cline.bot](https://cline.bot) 的模型额度转成**标准 OpenAI / Anthropic 兼容 API**。
-零依赖、单份核心逻辑、Node 与 Cloudflare Workers 双入口。
+零依赖、单份核心逻辑，**Node / Cloudflare Workers / Vercel Edge / Deno Deploy 四个入口**任选，也能直接上 Docker。
 
 **默认模型：`cline-cloud/deepseek-v4.1-flash`** —— 1M 上下文、带 reasoning、**0 credits**。
 
@@ -131,18 +131,36 @@ Model    : cline-cloud/deepseek-v4.1-flash
 
 ---
 
-## 五、部署
+## 五、部署到哪都行
 
-### 方式 A：本机 / VPS / Docker（推荐，无平台限制）
+核心逻辑一份，入口按平台挑：
+
+| 平台 | 用哪个入口 | 免费 | UA 限制 | 备注 |
+|---|---|---|---|---|
+| **本机 / VPS / NAS** | `server.js` | 白嫖 | 无 | 最省事，推荐常驻 |
+| **Docker** | `Dockerfile` / `docker-compose.yml` | 白嫖 | 无 | 群晖、Unraid、软路由都能跑 |
+| **Cloudflare Workers** | `worker.js` | ✅ | ⚠️ 非浏览器 UA 返回 `1010` | 边缘、全球，但客户端要带浏览器 UA |
+| **Vercel Edge** | `api/index.js` + `vercel.json` | ✅ | 无 | 适合做 CF 的备份通道；Hobby 有商用限制 |
+| **Deno Deploy** | `deno.js` | ✅ | 无 | 免费边缘，配置最干净 |
+| **Render / Railway / Koyeb / Zeabur** | `Dockerfile`（已带 `render.yaml` / `railway.json`） | 有免费档 | 无 | 直接把仓库拖进去即可 |
+| **Fly.io** | `Dockerfile`（已带 `fly.toml`） | 需绑卡 | 无 | `fly launch --copy-config` |
+| **手机 Termux / GitHub Codespaces** | `server.js` | 白嫖 | 无 | 临时应急很好用 |
+
+### A. 本机 / VPS / NAS（推荐）
 
 ```bash
-# 后台常驻（systemd / pm2 / nohup 任选）
-nohup node server.js > cline2api.log 2>&1 &
+node server.js &                       # 或 nohup / systemd / pm2
 ```
 
-> 公网暴露时**务必设置 `API_KEY`**，否则等于把你的 Cline 额度开放给所有人。
+Docker 一行：
 
-### 方式 B：Cloudflare Workers
+```bash
+docker compose up -d                   # 读 .env，映射 8787 端口
+```
+
+> 公网暴露**务必设置 `API_KEY`**，否则等于把你的 Cline 额度开放给所有人。
+
+### B. Cloudflare Workers
 
 ```bash
 npx wrangler deploy
@@ -150,10 +168,33 @@ npx wrangler secret put CLINE_REFRESH_TOKEN
 npx wrangler secret put API_KEY
 ```
 
-> ⚠️ Workers 默认域名对非浏览器 UA 会返回 `error code: 1010`，客户端需带浏览器 UA；
-> 嫌麻烦就用方式 A 自托管（Node 版没有这个限制）。
+> ⚠️ Workers 默认域名（`*.workers.dev`）对非浏览器 UA 返回 `error code: 1010`，
+> 客户端需带浏览器 UA，或绑自定义域名。嫌麻烦就用 A 或 C。
 
----
+### C. Vercel Edge
+
+```bash
+vercel --prod
+vercel env add CLINE_REFRESH_TOKEN production
+vercel env add API_KEY production
+vercel --prod          # 改完环境变量必须重新部署才生效
+```
+
+### D. Deno Deploy
+
+[dash.deno.com](https://dash.deno.com) → New Project → 入口填 `deno.js` →
+在 Environment Variables 里配 `CLINE_REFRESH_TOKEN` / `API_KEY`。
+
+### E. 容器平台（Render / Railway / Koyeb / Zeabur / Fly）
+
+把仓库（或只把 `cline2api/` 目录）接到平台，它认 `Dockerfile` 就够：
+
+- **Render**：New → Blueprint，会自动读 `render.yaml`（`CLINE_REFRESH_TOKEN` 标了 `sync: false`，在面板手填）
+- **Railway**：New Project → Deploy from GitHub，读 `railway.json`
+- **Koyeb / Zeabur**：选 Dockerfile 构建，暴露端口 `8787`
+- **Fly.io**：`fly launch --copy-config --no-deploy` → `fly secrets set CLINE_REFRESH_TOKEN=xxx` → `fly deploy`
+
+> 容器平台要确保 `HOST=0.0.0.0`（Dockerfile 已默认设好），否则健康检查连不上。
 
 ## 六、环境变量
 
@@ -190,13 +231,17 @@ npx wrangler secret put API_KEY
 
 ```
 cline2api/
-├── core.js         # 核心逻辑（平台无关）：模型解析 / 账号池 / 双协议转换 / 路由
-├── server.js       # Node 入口（零依赖，node server.js）
-├── worker.js       # Cloudflare Workers 入口（复用同一份 core.js）
-├── get-token.js    # 获取 CLINE_REFRESH_TOKEN（WorkOS 设备授权码流程）
-├── test/smoke.sh   # 端到端冒烟测试（真实请求上游，28 项）
-├── .env.example
-└── wrangler.toml
+├── core.js             # 核心逻辑（平台无关）：模型解析 / 账号池 / 双协议转换 / 路由
+├── server.js           # Node 入口（零依赖，node server.js）
+├── worker.js           # Cloudflare Workers 入口
+├── api/index.js        # Vercel Edge 入口（配 vercel.json 的 rewrites）
+├── deno.js             # Deno Deploy 入口
+├── get-token.js        # 获取 CLINE_REFRESH_TOKEN（WorkOS 设备授权码流程）
+├── Dockerfile          # 容器镜像（Render / Railway / Koyeb / Fly / 群晖 通用）
+├── docker-compose.yml  # 本机/NAS 一行起
+├── render.yaml / railway.json / fly.toml
+├── test/smoke.sh       # 端到端冒烟测试（真实请求上游，28 项）
+└── .env.example
 ```
 
 ## 许可

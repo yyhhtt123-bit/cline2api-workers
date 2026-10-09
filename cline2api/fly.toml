@@ -1,0 +1,16 @@
+# Fly.io：fly launch --copy-config --no-deploy 然后 fly secrets set CLINE_REFRESH_TOKEN=xxx
+app = "cline2api"
+primary_region = "nrt"
+
+[build]
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8787"
