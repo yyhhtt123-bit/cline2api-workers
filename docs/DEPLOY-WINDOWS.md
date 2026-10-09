@@ -23,14 +23,17 @@
 
 ### 第 2 步：把代码拿到本地
 
-装了 Git：
+装了 Git（**推荐，根目录就是项目本身，不带旧代码**）：
 
 ```powershell
-git clone -b cline/32dp414j https://github.com/yyhhtt123-bit/cline2api-workers.git
-cd cline2api-workers\cline2api
+git clone -b cline2api https://github.com/yyhhtt123-bit/cline2api-workers.git
+cd cline2api-workers
 ```
 
-没装 Git：在 GitHub 页面右上角 **Code → Download ZIP**（注意先切到 `cline/32dp414j` 分支），解压后在 PowerShell 里 `cd` 进 `cline2api` 目录。
+没装 Git：在 GitHub 页面把分支切到 **`cline2api`** → 右上角 **Code → Download ZIP** → 解压。
+
+> 旧分支 `cline/32dp414j` 里项目在 `cline2api/` 子目录下（工作分支，会持续加东西）；
+> `cline2api` 分支是干净快照，给部署用。
 
 ### 第 3 步：拿 refreshToken
 
