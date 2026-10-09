@@ -9,7 +9,8 @@
  *   2. /v1/models 能列出 cline-cloud / cline-free / cline-pass 三段模型
  *   3. OpenAI 路径（/v1/chat/completions）：cline-cloud 模型原样透传给上游，
  *      非流式被强制走上游 stream，max_tokens 被剥离，chunks 聚合后返回非流式
- *   4. Anthropic 路径（/v1/messages）：非流式同样强制上游 stream，再转回 Anthropic 格式
+ *   4. 无 token 模式：不配 CLINE_REFRESH_TOKEN 也能跑（不上 Authorization、只靠 X-CLIENT-TYPE 头）
+ *   5. Anthropic 路径（/v1/messages）：非流式同样强制上游 stream，再转回 Anthropic 格式
  *
  * 说明：worker.js 是 ESM，但仓库没有 package.json（Vercel/CF 都按原样部署），
  * Node 默认按 CJS 解析 .js，所以这里把源码复制成 .mjs 再动态 import；全局 fetch 被替换成 stub。
@@ -107,9 +108,33 @@ check("上游 model 原样透传", chat?.body?.model === TARGET, chat?.body?.mod
 check("上游被强制 stream", chat?.body?.stream === true);
 check("max_tokens 被剥离", !("max_tokens" in (chat?.body || {})));
 check("上游鉴权用 workos 前缀", String(chat?.headers?.Authorization).startsWith("Bearer workos:"));
-check("带上 Cline 客户端指纹头", chat?.headers?.["X-CLIENT-TYPE"] === "cline-sdk");
+check("带上 Cline 客户端指纹头 (X-CLIENT-TYPE: cline-cli)", chat?.headers?.["X-CLIENT-TYPE"] === "cline-cli");
 
-// ---- 4. Anthropic 路径 ----
+// ---- 4. 无 token 模式（不配 CLINE_REFRESH_TOKEN 也应能跑）----
+upstream.length = 0;
+res = await mod.default.fetch(
+  new Request("https://smoke.test/v1/health"),
+  {} // 没有任何环境变量
+);
+const healthNoToken = await res.json();
+check("无 token 时 health.token_mode = no-token", healthNoToken.token_mode === "no-token", JSON.stringify(healthNoToken));
+
+res = await mod.default.fetch(
+  new Request("https://smoke.test/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + API_KEY },
+    body: JSON.stringify({ model: TARGET, messages: [{ role: "user", content: "hi" }] }),
+  }),
+  {} // 无 CLINE_REFRESH_TOKEN、无 API_KEY
+);
+const noTokenBody = await res.json();
+check("无 token 也能拿到 200 结果", res.status === 200 && noTokenBody.choices?.[0]?.message?.content === "hello world");
+const chatNoToken = upstream.find((c) => c.url.endsWith("/chat/completions"));
+check("无 token 时上游不带 Authorization", chatNoToken && !("Authorization" in chatNoToken.headers), JSON.stringify(chatNoToken?.headers?.Authorization ?? null));
+check("无 token 时仍带 X-CLIENT-TYPE", chatNoToken?.headers?.["X-CLIENT-TYPE"] === "cline-cli");
+check("无 token 时不再调 /auth/refresh", !upstream.some((c) => c.url.endsWith("/auth/refresh")));
+
+// ---- 5. Anthropic 路径 ----
 upstream.length = 0;
 res = await post(
   "/v1/messages",

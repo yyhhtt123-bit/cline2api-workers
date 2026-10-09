@@ -8,7 +8,48 @@
 
 ---
 
-## 一、准备工作：获取 Cline 的 refreshToken ⭐（最关键）
+## 零、最快用法：其实只需要一个请求头 ⭐（2026-10-09 实测）
+
+**不需要 refreshToken，不需要反代，不需要任何账号**——上游只认一个请求头：
+
+```bash
+curl https://api.cline.bot/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-CLIENT-TYPE: cline-cli" \
+  -d '{"model":"cline-cloud/deepseek-v4.1-flash","messages":[{"role":"user","content":"你好"}]}'
+```
+
+本地实测结论（`node tests/live.mjs` 可复现）：
+
+| 请求头 | 结果 |
+|---|---|
+| 什么都不带 | ❌ 403 `... is only available via Cline product surfaces` |
+| 只带 `User-Agent: Cline/3.0.47` | ❌ 403（UA 不是关键） |
+| 带 `X-CLIENT-TYPE`（值填什么都可以） | ✅ **200**，而且**完全不需要 `Authorization`** |
+
+- 决定放行的**只有 `X-CLIENT-TYPE` 这一个头**；它的**值不校验**（`cline-cli` / `cline-sdk` / 随便写都 200，大小写不敏感）。
+- 带上它之后，上游用 **Cline 系统凭证**出结果（响应里 `provider_metadata…credentialType: "system"`），
+  不扣任何账号余额，所以**不需要 refreshToken**。
+- 这正是社区说的：**「不用反代，加个请求头就行了」**。
+
+于是有两条路：
+
+| | 做法 | 适合 |
+|---|---|---|
+| **A. 直连** | 客户端 Base URL 直接填 `https://api.cline.bot/api/v1`，在「自定义请求头」里加一条 `X-CLIENT-TYPE: cline-cli` | 最省事，零部署 |
+| **B. 用本仓库的 Worker**（推荐） | 部署后**什么都不用配**（`CLINE_REFRESH_TOKEN` 留空 = 无账号模式），客户端照常填 Worker 地址 | 想要 API Key 保护、`/v1/models` 模型列表、OpenAI + Anthropic 双协议、多账号轮换 |
+
+> ⚠️ 这条路骑在 Cline 的**系统凭证**上，官方随时可能改规则/加鉴权拦掉，谈不上稳定。
+> 自己玩、临时用没问题，别当生产依赖。
+
+---
+
+## 一、准备工作：获取 Cline 的 refreshToken（**可选** ⭐）
+
+> 💡 2026-10-09 起**可以跳过本章**：不配 refreshToken 也能用（见上方「零」）。
+> 配它的意义是：请求走**你自己账号**的额度与归属（免费日额度 429 时还能多账号轮换），
+> 而不是共用 Cline 的系统凭证。
+
 
 要调用 Cline 的 API，需要一个 **refreshToken**（相当于 Cline 账号的"长期钥匙"，用它换每次请求用的 accessToken）。
 
@@ -75,7 +116,7 @@ python3 cline_oauth.py
 ### 需要的东西
 
 - 一个 Cloudflare 账号（免费注册：[dash.cloudflare.com](https://dash.cloudflare.com)）
-- 上一步拿到的 `CLINE_REFRESH_TOKEN`
+- （可选）上一步拿到的 `CLINE_REFRESH_TOKEN`——**留空也能跑**（无账号模式，见「零」）
 
 ### 部署步骤（复制代码版，推荐 ✅）
 
@@ -85,7 +126,7 @@ python3 cline_oauth.py
 4. 进入 Worker → **编辑代码** → 删除默认代码，**粘贴**刚才复制的 `worker.js` 全部内容 → **部署**（右上角）
 5. **配置环境变量**（重点 ⚠️）：
    - Worker → **设置** → **变量和机密** → **添加**：
-     - **机密(Secret)**：`CLINE_REFRESH_TOKEN` = 第一步拿到的 refreshToken（必填）
+     - **机密(Secret)**：`CLINE_REFRESH_TOKEN` = 第一步拿到的 refreshToken（**可选**，留空 = 无账号模式）
        - **支持多账号**：一行一个 token，见下文「多账号」章节
      - **机密(Secret)**：`API_KEY` = 你的访问密钥，例如 `sk-cline-xxx`（建议必填，可自定义）
    - ⚠️ **保存后必须再点一次「部署」触发重新编译**，变量才会生效！
@@ -95,14 +136,15 @@ python3 cline_oauth.py
 > ```bash
 > curl https://cline2api.<你的子域>.workers.dev/v1/health
 > ```
-> 返回 `{"ok":true,"version":"1.1.9","authenticated":true,"accounts":N,"model":"..."}`：
-> `authenticated: true` 表示 API_KEY 已生效，`accounts` 是已配置的账号数量，`model` 是当前默认模型。
+> 返回 `{"ok":true,"version":"1.2.0","authenticated":true,"accounts":N,"token_mode":"account","model":"..."}`：
+> `authenticated: true` 表示 API_KEY 已生效，`accounts` 是已配置的账号数量，
+> `token_mode` 为 `account`（配了 refreshToken）或 `no-token`（无账号模式），`model` 是当前默认模型。
 
 ### 需要的东西&环境变量说明
 
 | 变量名 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `CLINE_REFRESH_TOKEN` | 机密 Secret | ✅ | Cline 账号 refreshToken，**一行一个，支持多账号** |
+| `CLINE_REFRESH_TOKEN` | 机密 Secret | 选填 | Cline 账号 refreshToken，**一行一个，支持多账号**；**留空 = 无账号模式**（只靠 `X-CLIENT-TYPE` 头走 Cline 系统凭证） |
 | `API_KEY` | 机密 Secret | 建议 | 客户端访问密钥；不设则用默认 `cline2api-default-key` |
 
 > 变量名必须**完全一致**（全大写、无空格）。修改后**务必保存并重新部署**才会生效。
@@ -199,7 +241,7 @@ vercel --prod
 2. **Production Branch 选 `main`**（本仓库只有 main 一条分支，CF 和 Vercel 两份代码都在里面）
 3. **Framework Preset 选 `Other`**，Root Directory 保持 `.`（⚠️ 不要填 `api`）→ Build / Output 全部留空
 4. **Environment Variables** 添加：
-   - `CLINE_REFRESH_TOKEN` = 你的 refreshToken（必填，一行一个支持多账号）
+   - `CLINE_REFRESH_TOKEN` = 你的 refreshToken（**可选**，一行一个支持多账号；留空 = 无账号模式）
    - `API_KEY` = 你的访问密钥（可选，不设则用默认 `cline2api-default-key`）
    - 环境至少勾 **Production**（想在预览环境测可再勾 Preview）
 5. **Deploy**
@@ -213,7 +255,7 @@ vercel --prod
 curl https://<项目名>.vercel.app/v1/health
 ```
 
-返回 `{"ok":true,"version":"1.1.9","authenticated":true,"accounts":1,"model":"cline-cloud/deepseek-v4.1-flash"}` 即成功。
+返回 `{"ok":true,"version":"1.2.0","authenticated":true,"accounts":1,"token_mode":"account","model":"cline-cloud/deepseek-v4.1-flash"}` 即成功。
 
 ```bash
 # 聊天测试
@@ -311,6 +353,18 @@ Model:    cline-cloud/deepseek-v4.1-flash   （默认，免费）
 > `free` / `clineCloud` / `clinePass` 三段，每 10 分钟刷新一次。所以**以 `GET /v1/models` 实际返回为准**，
 > 官方增删模型无需改代码。
 
+> ⚠️ **2026-10-09 更新（v1.2.0）：只需要一个请求头，refreshToken 变成可选** ⭐⭐
+> - **发现**：上游放行只取决于 `X-CLIENT-TYPE` 这一个头（值不校验），带它就**不需要 `Authorization`**，
+>   走的是 Cline **系统凭证**。详见上方「零、最快用法」。
+> - **代码改动**：
+>   1. `clineHeaders()` 的 client type 从 `cline-sdk` 改为 `cline-cli`（社区实测值；两者其实都放行）；
+>   2. `clineFetch()` 支持**无 token 模式**：没配 `CLINE_REFRESH_TOKEN` 时不再抛
+>      `缺少 CLINE_REFRESH_TOKEN 环境变量`，而是不发 `Authorization` 直接请求；
+>   3. `/v1/health` 新增 `token_mode` 字段（`account` / `no-token`），一眼看出当前模式。
+> - **实测**：`node tests/live.mjs` 真连上游跑通——无 token 时非流式返回 `PONG`、流式返回多个 chunk + `[DONE]`。
+> - **注意**：无 token 模式骑在 Cline 系统凭证上，官方改规则就会失效；要更稳就配自己的 refreshToken。
+
+
 > ⚠️ **2026-10-09 更新（v1.1.9）：接入 `cline-cloud/` 官方云端免费通道** ⭐
 > - **`clineCloud` 段**：官方插件接口 `GET /ai/cline/recommended-models` 返回体分三段——
 >   `free`（`cline-free/*` 官方插件免费额度）、**`clineCloud`（`cline-cloud/*` 官方云端免费通道）**、
@@ -380,7 +434,8 @@ Model:    cline-cloud/deepseek-v4.1-flash   （默认，免费）
 ├── vercel.json             # Vercel 路由重写：/v1/* → /api/index
 ├── wrangler.toml           # CF 命令行部署配置（用复制代码方式可忽略）
 ├── cline_oauth.py          # 获取 CLINE_REFRESH_TOKEN 的脚本 ⭐
-├── tests/smoke.mjs         # 冒烟测试（无需 token/联网真调，node tests/smoke.mjs）
+├── tests/smoke.mjs         # 冒烟测试（stub 上游，不联网，node tests/smoke.mjs）
+├── tests/live.mjs          # 真实链路测试（真连 api.cline.bot，无需 token，node tests/live.mjs）
 ├── .github/workflows/
 │   └── get-token.yml       # 手动运行的工作流：在 TG 上获取 refreshToken
 ├── README.md               # 本文件
@@ -397,12 +452,21 @@ node tests/smoke.mjs
 
 **不需要 refreshToken、不联网真调上游**（上游请求被 stub 掉），只验证代码逻辑：
 
-- `/v1/health` 的默认模型、`/v1/models` 是否列出 `cline-cloud/` `cline-free/` `cline-pass/` 三段且无重复
+- `/v1/health` 的默认模型与 `token_mode`、`/v1/models` 是否列出 `cline-cloud/` `cline-free/` `cline-pass/` 三段且无重复
 - OpenAI 路径：模型 ID 原样透传上游、非流式被强制走上游 stream、`max_tokens` 被剥离、
-  鉴权头是 `Bearer workos:<accessToken>`、Cline 客户端指纹头齐全、chunks 聚合后返回非流式
+  `X-CLIENT-TYPE: cline-cli` 头齐全、chunks 聚合后返回非流式
+- **无 token 模式**：不配 `CLINE_REFRESH_TOKEN` 时不发 `Authorization`、不调 `/auth/refresh`，仍能走通
 - Anthropic 路径：同样的强制 stream + 转回 Anthropic 响应格式
 
-> 它测的是**逻辑**，不代表上游真能通——真账号能不能跑通，只有部署后用真 `CLINE_REFRESH_TOKEN` 验证。
+另有一个**真连上游**的测试（会真调 api.cline.bot，无需 token）：
+
+```bash
+node tests/live.mjs
+```
+
+它会顺带验证「只有 `X-CLIENT-TYPE` 头决定放行」这个结论（裸请求 / 只带 UA → 403，带该头 → 200）。
+
+> `smoke.mjs` 只测逻辑（上游被 stub）；`live.mjs` 才是真连上游。两者在 2026-10-09 的环境里都跑通了（无需任何账号）。
 
 ## 七、获取 refreshToken 常见问题
 

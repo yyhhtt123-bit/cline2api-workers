@@ -156,7 +156,7 @@ async function refreshRecommendedModels() {
 // 默认模型：Cline 官方云端免费通道 cline-cloud/deepseek-v4.1-flash
 // 逆向自 recommended-models 的 clineCloud 段；走官方免费额度，无需 credits。
 const DEFAULT_MODEL = "cline-cloud/deepseek-v4.1-flash";
-const VERSION = "1.1.9";
+const VERSION = "1.2.0";
 
 // 需要"强制走上游 stream"的通道前缀。
 // 上游风控：这些免费/自带额度通道的非流式请求会被限流为 500 "empty response content"，
@@ -205,6 +205,7 @@ async function clineFetchHandler(request, env) {
         version: VERSION,
         authenticated: !!(env.API_KEY),
         accounts: poolN,
+        token_mode: poolN > 0 ? "account" : "no-token",
         model: DEFAULT_MODEL,
       }, 200);
     }
@@ -346,19 +347,22 @@ async function getAccessToken(env) {
 
 // Cline 客户端指纹请求头（官方靠这些头识别"是不是 Cline 客户端"）
 // 缺少会被 403: "deepseek/deepseek-v4-flash is only available via Cline product surfaces"
-// 关键：Cline API 会检查请求头，无伪装头的请求会被 403（"only available via Cline
-// product surfaces"）。以下头伪装成 Cline 官方客户端（3.0.47），成功绕过。
-// 验证：同 refreshToken，curl 裸测 → 403；走 clineHeaders → 429 限流（正常额度状态）。
-// ⚠️ 升级/同步时务必保留这些头，否则 deepseek 免费通道直接 403。
+//
+// ⚠️ 2026-10-09 实测（社区线索 + 本地抓包验证）：真正决定放行的**只有 `X-CLIENT-TYPE` 这一个头**：
+//   - 只带 `User-Agent: Cline/3.0.47`（无 X-CLIENT-TYPE）           → 403 product surfaces
+//   - 带 `X-CLIENT-TYPE: cline-cli`（其它头全不带、无 Authorization）→ 200
+//   - 该头的**值**似乎不校验（`cline-cli` / `cline-sdk` / `bogus-value` 都是 200，大小写不敏感）
+//   带这个头时上游用 **Cline 系统凭证**（响应里 provider_metadata…credentialType: "system"）出结果，
+//   所以**不配 refreshToken 也能跑**（这也是社区说的"不用反代，加个请求头就行"）。
+//   本 worker 保留完整指纹头只是更稳，其中 client type 取社区实测的 `cline-cli`（CLI 产品面）。
 function clineHeaders(sessionId) {
   return {
-    Authorization: "Bearer workos:" + currentToken,
     "Content-Type": "application/json",
     "User-Agent": "Cline/3.0.47",
     "HTTP-Referer": "https://cline.bot",
     "X-Title": "Cline",
     "X-IS-MULTIROOT": "false",
-    "X-CLIENT-TYPE": "cline-sdk",
+    "X-CLIENT-TYPE": "cline-cli",
     "X-CLIENT-VERSION": "3.0.47",
     "X-PLATFORM": "terminal",
     "X-PLATFORM-VERSION": "3.0.47",
@@ -367,21 +371,25 @@ function clineHeaders(sessionId) {
   };
 }
 
-// 当前账号的 accessToken（供 clineHeaders 使用）
+// 当前账号的 accessToken（配了 refreshToken 时用）
 let currentToken = "";
 
 async function clineFetch(env, path, bodyObj, sessionId, retried = false) {
-  const acc = currentAccount || null;
-  const token = await getAccessToken(env);
-  currentToken = token;
+  const pool = parseAccounts(env);
   const headers = clineHeaders(sessionId);
-  headers.Authorization = "Bearer workos:" + token;
+  // 配了 refreshToken → 带上 workos 账号 token（走账号额度/归属）；
+  // 没配 → 无账号模式，只靠 X-CLIENT-TYPE 头走 Cline 系统凭证。
+  if (pool.length > 0) {
+    const token = await getAccessToken(env);
+    currentToken = token;
+    headers.Authorization = "Bearer workos:" + token;
+  }
   const resp = await fetch(CLINE_API_BASE + path, {
     method: "POST",
     headers,
     body: JSON.stringify(bodyObj),
   });
-  if (resp.status === 401 && !retried) {
+  if (resp.status === 401 && !retried && pool.length > 0) {
     // token 失效：标记当前账号冷却，强制重试（会用别的账号/刷新）
     if (currentAccount) {
       currentAccount.cooldownUntil = Date.now() + 60 * 1000;
