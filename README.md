@@ -380,6 +380,7 @@ Model:    cline-cloud/deepseek-v4.1-flash   （默认，免费）
 ├── vercel.json             # Vercel 路由重写：/v1/* → /api/index
 ├── wrangler.toml           # CF 命令行部署配置（用复制代码方式可忽略）
 ├── cline_oauth.py          # 获取 CLINE_REFRESH_TOKEN 的脚本 ⭐
+├── tests/smoke.mjs         # 冒烟测试（无需 token/联网真调，node tests/smoke.mjs）
 ├── .github/workflows/
 │   └── get-token.yml       # 手动运行的工作流：在 TG 上获取 refreshToken
 ├── README.md               # 本文件
@@ -387,6 +388,21 @@ Model:    cline-cloud/deepseek-v4.1-flash   （默认，免费）
 ```
 
 > ⚠️ `worker.js` 与 `api/index.js` **逻辑同源**：改功能时两份都要同步改（否则 CF 与 Vercel 行为会不一致）。
+
+### 本地冒烟测试（改完代码先跑这个）
+
+```bash
+node tests/smoke.mjs
+```
+
+**不需要 refreshToken、不联网真调上游**（上游请求被 stub 掉），只验证代码逻辑：
+
+- `/v1/health` 的默认模型、`/v1/models` 是否列出 `cline-cloud/` `cline-free/` `cline-pass/` 三段且无重复
+- OpenAI 路径：模型 ID 原样透传上游、非流式被强制走上游 stream、`max_tokens` 被剥离、
+  鉴权头是 `Bearer workos:<accessToken>`、Cline 客户端指纹头齐全、chunks 聚合后返回非流式
+- Anthropic 路径：同样的强制 stream + 转回 Anthropic 响应格式
+
+> 它测的是**逻辑**，不代表上游真能通——真账号能不能跑通，只有部署后用真 `CLINE_REFRESH_TOKEN` 验证。
 
 ## 七、获取 refreshToken 常见问题
 
