@@ -57,6 +57,15 @@ v2 的做法：
 
 ## 三、快速开始
 
+### 0. 拿到代码
+
+```bash
+git clone -b cline2api https://github.com/yyhhtt123-bit/cline2api-workers.git
+cd cline2api-workers
+```
+
+> Windows 用户看 [docs/DEPLOY-WINDOWS.md](docs/DEPLOY-WINDOWS.md)（含一键 bat、开机自启、防火墙）。
+
 ### 1. 拿 refreshToken
 
 ```bash
