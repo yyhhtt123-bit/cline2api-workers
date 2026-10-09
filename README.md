@@ -95,7 +95,8 @@ python3 cline_oauth.py
 > ```bash
 > curl https://cline2api.<你的子域>.workers.dev/v1/health
 > ```
-> 返回 `api_key_configured: true` 即表示变量已生效，`account_count` 显示已配置的账号数量。
+> 返回 `{"ok":true,"version":"1.1.9","authenticated":true,"accounts":N,"model":"..."}`：
+> `authenticated: true` 表示 API_KEY 已生效，`accounts` 是已配置的账号数量，`model` 是当前默认模型。
 
 ### 需要的东西&环境变量说明
 
@@ -125,21 +126,21 @@ python3 cline_oauth.py
 - 🛡️ **全部冷却不空转**：所有账号均冷却时直接返回上游响应，不盲目重试
 - 单账号时完全兼容，原样工作
 
-**验证：** 部署后访问 `/v1/health`，返回 `account_count` 即当前账号数量。
+**验证：** 部署后访问 `/v1/health`，返回的 `accounts` 即当前账号数量。
 
 ### 验证部署
 
 ```bash
-curl https://cline2api.<你的子域>.workers.dev/v1/models \
-  -H "Authorization: Bearer <你的API_KEY>"
+# /v1/models 免鉴权，加不加 Authorization 都行
+curl https://cline2api.<你的子域>.workers.dev/v1/models
 ```
-应返回模型列表。再发一次聊天：
+应返回模型列表（含 `cline-cloud/deepseek-v4.1-flash`）。再发一次聊天：
 
 ```bash
 curl https://cline2api.<你的子域>.workers.dev/v1/chat/completions \
   -H "Authorization: Bearer <你的API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"poolside/laguna-s-2.1:free","messages":[{"role":"user","content":"你好"}]}'
+  -d '{"model":"cline-cloud/deepseek-v4.1-flash","messages":[{"role":"user","content":"你好"}]}'
 ```
 
 ---
@@ -212,14 +213,14 @@ vercel --prod
 curl https://<项目名>.vercel.app/v1/health
 ```
 
-返回 `{"ok":true,"version":"1.1.8","model":"cline-free/deepseek-v4.1-flash",...}` 即成功。
+返回 `{"ok":true,"version":"1.1.9","authenticated":true,"accounts":1,"model":"cline-cloud/deepseek-v4.1-flash"}` 即成功。
 
 ```bash
 # 聊天测试
 curl https://<项目名>.vercel.app/v1/chat/completions \
   -H "Authorization: Bearer ***" \
   -H "Content-Type: application/json" \
-  -d '{"model":"cline-free/deepseek-v4.1-flash","messages":[{"role":"user","content":"你好"}]}'
+  -d '{"model":"cline-cloud/deepseek-v4.1-flash","messages":[{"role":"user","content":"你好"}]}'
 ```
 
 ### ⚠️ Vercel 部署的坑（实测）
@@ -252,8 +253,8 @@ curl https://<项目名>.vercel.app/v1/chat/completions \
 - **API Base / Base URL**：`https://cline2api.<你的子域>.workers.dev/v1`
   （部分平台要求不带 `/v1` 的填写为 `https://cline2api.<你的子域>.workers.dev`，按平台提示试）
 - **API Key**：填你设置的 `API_KEY` 值（如 `sk-cline-xxx`）
-- **Model**：`deepseek/deepseek-v4-flash`（默认）或 `poolside/laguna-s-2.1:free`、`zai/glm-5.2`（付费，约 $0.0008/次）。
-  `depth/deepseek-v4-flash` 是 `deepseek/deepseek-v4-flash` 的拼写别名，同款免费，任意前缀均可。
+- **Model**：`cline-cloud/deepseek-v4.1-flash`（默认，免费）或 `poolside/laguna-s-2.1:free`、`z-ai/glm-5.3-flash`。
+  完整可选模型以 `GET /v1/models` 实际返回为准。
 
 > 若 AgentScope 平台走的标准 OpenAI SDK，直接指定上述 base_url + api_key 即可。
 > 若测试报 401，请确认 `API_KEY` 变量已在 CF 配置并重新部署过。
@@ -288,7 +289,7 @@ User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 ```text
 Base URL: https://cline2api.<你的子域>.workers.dev/v1   （或 https://<项目名>.vercel.app/v1）
 API Key:  <你设置的 API_KEY>
-Model:    cline-free/deepseek-v4.1-flash   （默认，免费）
+Model:    cline-cloud/deepseek-v4.1-flash   （默认，免费）
 ```
 
 兼容 OpenAI 客户端（`/v1/chat/completions`）和 Anthropic 客户端（`/v1/messages`，自动转换）。
@@ -297,15 +298,36 @@ Model:    cline-free/deepseek-v4.1-flash   （默认，免费）
 
 | 模型 ID | 结果 |
 |---|---|
-| `cline-free/deepseek-v4.1-flash` | ✅ **免费可用**（默认；逆向自官方插件 recommended-models 免费通道，无需 credits） |
+| `cline-cloud/deepseek-v4.1-flash` | ✅ **免费可用**（默认；逆向自 recommended-models 的 `clineCloud` 段，官方云端免费通道） |
+| `cline-free/*`（`mimo-v2.6-flash` / `muse-spark-1.3-contributor` / `step-5-preview` / `solar-mini4`） | ✅ **免费可用**（官方插件免费额度，来自 `free` 段，随官方调整自动跟进） |
 | `deepseek/deepseek-v4-flash` | ✅ **免费可用**（需完整 Cline 客户端头 + 强制 stream，已修复） |
-| `depth/deepseek-v4-flash` | ✅ **免费可用**（`deepseek/deepseek-v4-flash` 的拼写别名，同款，前端任一前缀均可） |
 | `poolside/laguna-s-2.1:free` | ✅ **免费可用** |
-| `zai/glm-5.2` | ✅ **可用（付费）**，走 Cline 系统凭证，约 $0.0008/次 |
-| `z-ai/glm-5.3-flash` | ✅ **免费可用**（2026-09-19 修复，见下方 v1.1.8 说明） |
-| `deepseek/deepseek-v4.1-flash` | ❌ **402 insufficient_credits**（付费档，余额不足；免费请用 `cline-free/` 前缀） |
-| `cline-free/glm-5.2` | ❌ **已下架**（上游 404 `model not found`，2026-08-06 实测） |
-| `cline-pass/*` | ❌ 403，需付费 cline-pass 订阅 |
+| `poolside/laguna-xs-2.1:free` | ✅ **免费可用**（`:free` 后缀，随 `/v1/models` 自动跟进） |
+| `z-ai/glm-5.3-flash` | ⚠️ **已开始扣费**（2026-09-26 实测不再免费，见下方更新说明） |
+| `deepseek/deepseek-v4.1-flash` | ❌ **402 insufficient_credits**（付费档，余额不足；免费请用 `cline-cloud/` 前缀） |
+| `cline-pass/*` | ⚠️ 需 Cline Pass 订阅；模型名会列出，但无订阅时上游返回 403 |
+
+> ⚠️ 模型池 = 内置兜底列表 ∪ 官方 `/v1/models`（`:free` 后缀 + 免费白名单）∪ `recommended-models` 的
+> `free` / `clineCloud` / `clinePass` 三段，每 10 分钟刷新一次。所以**以 `GET /v1/models` 实际返回为准**，
+> 官方增删模型无需改代码。
+
+> ⚠️ **2026-10-09 更新（v1.1.9）：接入 `cline-cloud/` 官方云端免费通道** ⭐
+> - **`clineCloud` 段**：官方插件接口 `GET /ai/cline/recommended-models` 返回体分三段——
+>   `free`（`cline-free/*` 官方插件免费额度）、**`clineCloud`（`cline-cloud/*` 官方云端免费通道）**、
+>   `clinePass`（需订阅）。此前 worker 只合并了 `free` 段，`cline-cloud/deepseek-v4.1-flash` 拿不到。
+> - **修复**：`refreshRecommendedModels()` 改为三段全合并，并把 `cline-cloud/deepseek-v4.1-flash`
+>   设为默认模型；`forceStream` 前缀扩展为 `deepseek/`、`cline-free/`、`cline-pass/`、**`cline-cloud/`**
+>  （提取成 `needsForceStream()`，两条协议路径共用）。
+> - **顺带修正**：内置兜底列表清掉了上游已不存在的假模型名（`cline-free/deepseek-v4.1-flash`、
+>   `cline-pass/glm-5.2`、`cline-pass/deepseek-v4-flash`、`zai/glm-5.3-flash` 拼写错误），
+>   与线上 `recommended-models` 三段对齐。
+> - **未实测部分**：本机没有可用 refreshToken，`cline-cloud/deepseek-v4.1-flash` 的**真实端到端调用
+>   需你部署后用真账号验证**。已验证的是：模型出现在 `/v1/models`、请求正确转发到
+>   `POST /chat/completions`（model 原样透传、非流式被强制走上游 stream、`max_tokens` 被剥离）。
+
+> ⚠️ **2026-09-26 观察（来自社区帖子）**：`z-ai/glm-5.3-flash` 此前免费，现在开始扣余额；
+> 免费额度里 deepseek 仍是主力（有用户 5000+ 次调用约 10 亿 token），单账号重度使用约 15 分钟后触发 429
+> （`Daily free limit reached` → 多账号轮换可缓解，见「多账号」章节）。
 
 > ⚠️ **2026-09-19 更新（v1.1.8）：剥离 `max_tokens`，解锁更多免费模型** ⭐
 > - **根因**：上游对免费模型的请求体只要带 `max_tokens` 字段，一律返回
@@ -321,7 +343,9 @@ Model:    cline-free/deepseek-v4.1-flash   （默认，免费）
 > ⚠️ **2026-09-16 更新：接入 DS V4.1 Flash 免费通道** ⭐
 > - **`cline-free/` 前缀 = Cline 官方插件免费通道**。官方插件（VS Code / JetBrains）通过
 >   `GET https://api.cline.bot/api/v1/ai/cline/recommended-models` 拉取模型列表，返回体里的
->   **`free` 数组**就是免 credits 的模型，其中 `cline-free/deepseek-v4.1-flash` 为当前主力。
+>   **`free` 数组**就是免 credits 的模型，其中 `cline-free/deepseek-v4.1-flash` 为当前主力
+>   （注：截至 2026-10-09，`free` 段已换成 `mimo-v2.6-flash` 等，deepseek 免费通道改用 `cline-cloud/` 前缀，
+>   见上方 v1.1.9 更新）。
 > - **关键区别**：不带前缀的 `deepseek/deepseek-v4.1-flash` 是**付费档**（余额不足直接 402
 >   `insufficient_credits`）；只有 `cline-free/deepseek-v4.1-flash` 走官方免费额度。
 > - worker 每次刷新模型列表时会**同时拉取 `recommended-models`**，把 `free` 数组合并进模型池，
@@ -373,10 +397,11 @@ Model:    cline-free/deepseek-v4.1-flash   （默认，免费）
 → 会，但 Cline 的 refreshToken 有效期较长。如果将来请求返回 401/403 token 失效，重新跑 `cline_oauth.py` 拿新的即可。
 
 **Q: 免费额度够用吗？**
-→ `cline-free/deepseek-v4.1-flash`（默认）、`deepseek/deepseek-v4-flash`、`poolside/laguna-s-2.1:free` 和 `z-ai/glm-5.3-flash` 都是免费模型。
+→ `cline-cloud/deepseek-v4.1-flash`（默认）、`cline-free/*`（`mimo-v2.6-flash` / `step-5-preview` / `solar-mini4` …）、
+   `deepseek/deepseek-v4-flash`、`poolside/*:free` 都是免费模型（以 `GET /v1/models` 为准）。
    deepseek 有**每日免费额度**（用尽返回 429 "Daily free limit reached"，数小时后恢复）；
    多账号可缓解（`CLINE_REFRESH_TOKEN` 多行填多个 token，额度用尽自动切号）。
-   `zai/glm-5.2` 为付费模型（约 $0.0008/次），走 Cline 系统凭证，无每日额度限制。
+   注意 `z-ai/glm-5.3-flash` 已不再免费（2026-09-26 起扣余额），`cline-pass/*` 需订阅。
 
 ---
 

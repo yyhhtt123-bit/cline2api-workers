@@ -9,8 +9,8 @@
  *  3. SSE 流式响应剥掉上游 {data:{...}} 包装，透传给客户端
  *
  * 环境变量：
- *  - CLINE_REFRESH_TOKEN (必需)  Cline 账号的 refreshToken
- *  - API_KEY                (可选) 自定义访问 key；不设置则每次部署随机生成并打印到日志
+ *  - CLINE_REFRESH_TOKEN (必需)  Cline 账号的 refreshToken，一行一个支持多账号
+ *  - API_KEY                (可选) 自定义访问 key；不设置则用内置默认 key "cline2api-default-key"
  *
  * 用法（OpenAI 兼容）：
  *   curl https://你的worker/v1/chat/completions \
@@ -29,16 +29,26 @@ let accounts = [];
 let accountIndex = 0;          // round-robin 游标
 let currentAccount = null;     // 当前正在使用的账号（串行队列下安全）
 
-// 模型列表：原样使用 Cline /v1/models 返回的完整模型 ID。
-// 不人为添加 cline/ 前缀；Telegram 会完整显示这些 ID，避免不同供应商模型名被截断后混淆。
+// 模型列表（兜底）：动态拉取失败时使用。
+// 三段与官方插件 recommended-models 的 free / clineCloud / clinePass 对齐，
+// 原样使用 Cline 上游的完整模型 ID，不人为加/删前缀（避免不同供应商模型名被截断后混淆）。
 const MODELS = [
-  { id: "cline-free/deepseek-v4.1-flash", upstream: "cline-free/deepseek-v4.1-flash", provider: "cline", cost: "free" },
+  // cline-cloud：Cline 官方云端免费通道（本次新增，免费层级主力）
+  { id: "cline-cloud/deepseek-v4.1-flash", upstream: "cline-cloud/deepseek-v4.1-flash", provider: "cline-cloud", cost: "free" },
+  // cline-free：官方插件免费额度
+  { id: "cline-free/mimo-v2.6-flash", upstream: "cline-free/mimo-v2.6-flash", provider: "cline-free", cost: "free" },
+  { id: "cline-free/muse-spark-1.3-contributor", upstream: "cline-free/muse-spark-1.3-contributor", provider: "cline-free", cost: "free" },
+  { id: "cline-free/step-5-preview", upstream: "cline-free/step-5-preview", provider: "cline-free", cost: "free" },
+  { id: "cline-free/solar-mini4", upstream: "cline-free/solar-mini4", provider: "cline-free", cost: "free" },
+  // /v1/models 里带 :free 后缀或在免费白名单内的模型
   { id: "deepseek/deepseek-v4-flash", upstream: "deepseek/deepseek-v4-flash", provider: "deepseek", cost: "free" },
+  { id: "deepseek/deepseek-v4-flash-0731", upstream: "deepseek/deepseek-v4-flash-0731", provider: "deepseek", cost: "free" },
   { id: "poolside/laguna-s-2.1:free", upstream: "poolside/laguna-s-2.1:free", provider: "poolside", cost: "free" },
-  { id: "cline-pass/glm-5.2", upstream: "cline-pass/glm-5.2", provider: "zai", cost: "pass" },
-  { id: "cline-pass/deepseek-v4-flash", upstream: "cline-pass/deepseek-v4-flash", provider: "deepseek", cost: "pass" },
-  { id: "cline-pass/qwen3.7-max", upstream: "cline-pass/qwen3.7-max", provider: "qwen", cost: "pass" },
-  { id: "zai/glm-5.3-flash", upstream: "zai/glm-5.3-flash", provider: "zai", cost: "free" },
+  { id: "z-ai/glm-5.3-flash", upstream: "z-ai/glm-5.3-flash", provider: "z-ai", cost: "free" },
+  // cline-pass：需 Cline Pass 订阅
+  { id: "cline-pass/deepseek-v4.1-flash", upstream: "cline-pass/deepseek-v4.1-flash", provider: "cline-pass", cost: "pass" },
+  { id: "cline-pass/glm-5.3-flash", upstream: "cline-pass/glm-5.3-flash", provider: "cline-pass", cost: "pass" },
+  { id: "cline-pass/qwen3.7-max", upstream: "cline-pass/qwen3.7-max", provider: "cline-pass", cost: "pass" },
 ];
 
 // ============ 动态模型列表 (2026-08-29) ============
@@ -92,14 +102,14 @@ async function refreshModels() {
         const prefix = id.split("/")[0] || "cline";
         return { id, upstream: id, provider: prefix, cost: "free" };
       });
-    // 合并 recommended-models 里的 cline-free 免费模型
-    const freeExtra = await refreshFreeModels();
-    for (const fm of freeExtra) {
-      if (!baseList.some((b) => b.id === fm.id)) baseList.push(fm);
+    // 合并 recommended-models 的 cline-cloud / cline-free / cline-pass 三段模型
+    const recommended = await refreshRecommendedModels();
+    for (const rm of recommended) {
+      if (!baseList.some((b) => b.id === rm.id)) baseList.push(rm);
     }
     modelsCache = baseList;
     modelsCacheTime = now;
-    console.log("[models] 动态拉取成功:", modelsCache.length, "个模型 (含 cline-free 免费通道)");
+    console.log("[models] 动态拉取成功:", modelsCache.length, "个模型 (含 cline-cloud/cline-free/cline-pass 通道)");
     return modelsCache;
   } catch (e) {
     console.log("[models] 拉取异常:", String(e).slice(0, 100), "回退内置列表");
@@ -109,32 +119,52 @@ async function refreshModels() {
 
 
 // =====================================================================
-// Cline 官方免费模型列表（逆向自插件 recommended-models 接口）
-// 官方插件用 https://api.cline.bot/api/v1/ai/cline/recommended-models 获取
-// 免费 (cline-free/) 模型。这些模型走官方免费额度，不需要 credits。
-// 反之 deepseek/deepseek-v4.1-flash 是付费档，余额不足返回 402 insufficient_credits。
-// 动态刷新时同时拉这个接口，把 free 列表合并进模型池。
+// Cline 官方推荐模型列表（逆向自插件 recommended-models 接口）
+// 官方插件用 https://api.cline.bot/api/v1/ai/cline/recommended-models 获取模型，
+// 返回体分三段（2026-09 实测）：
+//   free        → cline-free/* 官方插件免费额度，不需要 credits
+//   clineCloud  → cline-cloud/* 官方云端免费通道（cline-cloud/deepseek-v4.1-flash）
+//   clinePass   → cline-pass/*  需 Cline Pass 订阅（非免费）
+// 动态刷新时把三段一起合并进模型池，官方日后调整可自动跟进，无需改代码。
+// 反之 deepseek/deepseek-v4.1-flash（不带前缀）是付费档，余额不足返回 402 insufficient_credits。
 // =====================================================================
-async function refreshFreeModels() {
+async function refreshRecommendedModels() {
   try {
     const resp = await fetch(CLINE_API_BASE + "/ai/cline/recommended-models", {
       headers: { "User-Agent": "Mozilla/5.0 (cline2api)" },
     });
     if (!resp.ok) return [];
     const data = await resp.json();
-    const list = Array.isArray(data?.free) ? data.free : [];
-    return list
-      .filter((m) => m && m.id)
-      .map((m) => ({ id: m.id, upstream: m.id, provider: m.id.split("/")[0] || "cline", cost: "free" }));
+    const out = [];
+    const take = (arr, cost) => {
+      if (!Array.isArray(arr)) return;
+      for (const m of arr) {
+        if (!m || !m.id) continue;
+        if (String(m.id).endsWith(":batch")) continue;
+        out.push({ id: m.id, upstream: m.id, provider: m.id.split("/")[0] || "cline", cost });
+      }
+    };
+    take(data?.free, "free");        // 官方插件免费额度
+    take(data?.clineCloud, "free");  // 官方云端免费通道（本次目标）
+    take(data?.clinePass, "pass");   // 需订阅，仅顺带列出
+    return out;
   } catch (e) {
     return [];
   }
 }
 
-// 默认模型：Cline 免费 DeepSeek V4.1 Flash 通道（cline-free/ 官方免费额度，无需 credits）
-// 逆向自官方插件 recommended-models free 列表：cline-free/deepseek-v4.1-flash
-const DEFAULT_MODEL = "cline-free/deepseek-v4.1-flash";
-const VERSION = "1.1.8";
+// 默认模型：Cline 官方云端免费通道 cline-cloud/deepseek-v4.1-flash
+// 逆向自 recommended-models 的 clineCloud 段；走官方免费额度，无需 credits。
+const DEFAULT_MODEL = "cline-cloud/deepseek-v4.1-flash";
+const VERSION = "1.1.9";
+
+// 需要"强制走上游 stream"的通道前缀。
+// 上游风控：这些免费/自带额度通道的非流式请求会被限流为 500 "empty response content"，
+// 流式请求正常；所以客户端要非流式时，worker 强制上游走 stream，聚合后再返回。
+const FORCE_STREAM_PREFIXES = ["deepseek/", "cline-free/", "cline-pass/", "cline-cloud/"];
+function needsForceStream(model) {
+  return FORCE_STREAM_PREFIXES.some((p) => String(model).startsWith(p));
+}
 
 // =====================================================================
 // Vercel Edge Function 入口
@@ -489,9 +519,9 @@ async function handleChat(request, env) {
     messages: params.messages || [],
   };
   // ⚠️ 上游风控: 免费模型请求体带 max_tokens 字段一律 500 "empty response content"，剥离
-  // ⚠️ 免费 DeepSeek 通道：非流式请求被上游限流(500 empty response content)，
-  //    流式请求正常。所以客户端要非流式时，强制上游走 stream，再聚合返回。
-  const forceStream = !isStream && (upstreamModel.startsWith("deepseek/") || upstreamModel.startsWith("cline-free/") || upstreamModel.startsWith("cline-pass/"));
+  // ⚠️ 免费/自带额度通道(cline-cloud、cline-free、cline-pass、deepseek)：非流式请求被上游限流
+  //    (500 empty response content)，流式请求正常。所以客户端要非流式时，强制上游走 stream，再聚合返回。
+  const forceStream = !isStream && needsForceStream(upstreamModel);
   if (isStream || forceStream) body.stream = true;
   // 透传可选参数
   for (const k of ["temperature", "top_p", "tools", "tool_choice", "stop", "presence_penalty", "frequency_penalty", "response_format", "user", "n", "seed"]) {
@@ -690,8 +720,8 @@ async function handleAnthropic(request, env) {
     messages,
   };
   // ⚠️ 上游风控: 免费模型请求体带 max_tokens 字段一律 500，剥离（同 chat/completions 路径）
-  // ⚠️ 免费 DeepSeek 通道：非流式被上游限流，强制上游 stream 再聚合
-  const forceStream = !isStream && (upstreamModel.startsWith("deepseek/") || upstreamModel.startsWith("cline-free/") || upstreamModel.startsWith("cline-pass/"));
+  // ⚠️ 免费/自带额度通道(cline-cloud、cline-free、cline-pass、deepseek)：非流式被上游限流，强制上游 stream 再聚合
+  const forceStream = !isStream && needsForceStream(upstreamModel);
   if (isStream || forceStream) body.stream = true;
   if (req.temperature !== undefined) body.temperature = req.temperature;
   if (req.top_p !== undefined) body.top_p = req.top_p;

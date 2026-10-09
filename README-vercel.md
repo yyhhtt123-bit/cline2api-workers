@@ -47,5 +47,5 @@ curl https://<项目名>.vercel.app/v1/health
 curl https://<项目名>.vercel.app/v1/chat/completions \
   -H "Authorization: Bearer ***" \
   -H "Content-Type: application/json" \
-  -d '{"model":"cline-free/deepseek-v4.1-flash","messages":[{"role":"user","content":"hi"}],"stream":true}'
+  -d '{"model":"cline-cloud/deepseek-v4.1-flash","messages":[{"role":"user","content":"hi"}],"stream":true}'
 ```
