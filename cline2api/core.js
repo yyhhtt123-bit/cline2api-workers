@@ -224,7 +224,7 @@ export async function getModels(env, force = false) {
   if (!force && modelsCache && now - modelsCacheAt < MODELS_TTL_MS) return modelsCache;
   try {
     const resp = await fetch(cfg.apiBase + "/ai/cline/recommended-models", {
-      headers: upstreamHeaders(null),
+      headers: upstreamHeaders(null, null, env),
     });
     if (!resp.ok) throw new Error("http_" + resp.status);
     const data = await resp.json();
@@ -268,16 +268,26 @@ export async function resolveModel(env, requested) {
 // 上游调用
 // ---------------------------------------------------------------------------
 
-/**
- * 上游请求头。
- * ⚠️ 唯一必须的是 X-CLIENT-TYPE: cline-sdk —— 去掉它，cline-* 系列模型一律
- *    403 "only available via Cline product surfaces"。UA 与其余头都无关紧要。
- */
-export function upstreamHeaders(accessToken, sessionId) {
+export function upstreamHeaders(accessToken, sessionId, env) {
+  // 官方客户端头集合（取自 cline/cline 仓库 sdk/packages/llms/src/providers/request-headers.ts
+  // 的 DEFAULT_CLINE_REQUEST_HEADERS + buildClineRequestHeaders）。
+  // ⚠️ 少发这些头会被上游拒绝（实测 403 "This request is not supported" 或
+  //    "only available via Cline product surfaces"）。版本号可随官方更新，用环境变量覆盖：
+  //    CLINE_CLIENT_VERSION / CLINE_CLIENT_TYPE / CLINE_CORE_VERSION
+  const version = readEnv(env, "CLINE_CLIENT_VERSION") || "3.0.70";
+  const clientType = readEnv(env, "CLINE_CLIENT_TYPE") || "cline-sdk";
+  const coreVersion = readEnv(env, "CLINE_CORE_VERSION") || "0.0.92";
   const headers = {
     "Content-Type": "application/json",
-    "X-CLIENT-TYPE": "cline-sdk",
-    "User-Agent": "Cline/3.0.47",
+    "User-Agent": "Cline/" + version,
+    "HTTP-Referer": "https://cline.bot",
+    "X-Title": "Cline",
+    "X-IS-MULTIROOT": "false",
+    "X-CLIENT-TYPE": clientType,
+    "X-CLIENT-VERSION": version,
+    "X-PLATFORM": "terminal",
+    "X-PLATFORM-VERSION": version,
+    "X-CORE-VERSION": coreVersion,
   };
   if (sessionId) headers["X-Task-ID"] = sessionId;
   if (accessToken) headers.Authorization = "Bearer workos:" + accessToken;
@@ -318,7 +328,7 @@ async function clineFetchOnce(env, cfg, body, sessionId, attempt = 0) {
   try {
     const resp = await fetch(cfg.apiBase + "/chat/completions", {
       method: "POST",
-      headers: upstreamHeaders(token, sessionId),
+      headers: upstreamHeaders(token, sessionId, env),
       body: JSON.stringify(body),
     });
     if (resp.status === 401 && account && attempt < 1) {
