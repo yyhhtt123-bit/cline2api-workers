@@ -42,6 +42,18 @@ curl https://api.cline.bot/api/v1/chat/completions \
 > ⚠️ 这条路骑在 Cline 的**系统凭证**上，官方随时可能改规则/加鉴权拦掉，谈不上稳定。
 > 自己玩、临时用没问题，别当生产依赖。
 
+> ⚠️️ **2026-10-09 补充实测：匿名通道对来源有限制**
+> 同一份代码、同一个请求，从不同来源发出反应不同：
+>
+> | 来源 | 结果 |
+> |---|---|
+> | 云主机出口（本仓库开发者测试用的 Google Cloud 出口） | ✅ 200 |
+> | **家用宽带**（Windows + curl，带 `X-CLIENT-TYPE`） | ❌ 401 `Unauthorized ... re-authenticate your Cline account` |
+> | **Cloudflare Worker 出口**（v1.2.0 无 token 模式，上游报错相同） | ❌ 401 同上 |
+>
+> 也就是说：**「不用 token 只加个头」这条路不是所有网络都能走**，上游会按来源拒绝。遇到这个 401 就别再折腾请求头了，
+> 直接去第一章配自己的 `CLINE_REFRESH_TOKEN`（走账号鉴权，`token_mode` 会变成 `account`）。
+
 ---
 
 ## 一、准备工作：获取 Cline 的 refreshToken（**可选** ⭐）
