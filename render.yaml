@@ -1,0 +1,15 @@
+# Render Blueprint：https://render.com → New → Blueprint → 选本仓库
+services:
+  - type: web
+    name: cline2api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /v1/health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: CLINE_REFRESH_TOKEN
+        sync: false        # 在 Render 面板里手填，别写进仓库
+      - key: API_KEY
+        sync: false
