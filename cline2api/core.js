@@ -41,12 +41,11 @@
  */
 
 export const VERSION = "2.0.0";
-export const DEFAULT_MODEL_ID = "cline-cloud/deepseek-v4.1-flash";
+export const DEFAULT_MODEL_ID = "cline-free/mimo-v2.6-flash";
 const DEFAULT_API_BASE = "https://api.cline.bot/api/v1";
 
 // 内置兜底模型列表（recommended-models 拉取失败时用）
 const BUILTIN_MODELS = [
-  { id: "cline-cloud/deepseek-v4.1-flash", tier: "cloud", usable: true },
   { id: "cline-free/mimo-v2.6-flash", tier: "free", usable: true },
   { id: "cline-free/muse-spark-1.3-contributor", tier: "free", usable: true },
   { id: "cline-free/step-5-preview", tier: "free", usable: true },
@@ -94,6 +93,10 @@ export function getConfig(env) {
     maxConcurrent: Number.isFinite(maxConcurrent) && maxConcurrent > 0 ? maxConcurrent : 8,
     // /v1/models 默认公开（方便 GUI 校验），设为 true 则一并要求 API_KEY
     protectModels: readEnv(env, "PROTECT_MODELS").toLowerCase() === "true",
+    // cline-cloud/* 仅产品面可用：请求它时自动降级到免费层模型
+    cloudFallback: readEnv(env, "CLOUD_FALLBACK").toLowerCase() !== "false",
+    // 直接使用 Cline API Key（app.cline.bot → Settings → API Keys），与 refreshToken 二选一
+    directApiKey: readEnv(env, "CLINE_API_KEY"),
   };
 }
 
@@ -229,8 +232,12 @@ export async function getModels(env, force = false) {
     if (!resp.ok) throw new Error("http_" + resp.status);
     const data = await resp.json();
     const list = [
-      ...mapTier(data.clineCloud, "cloud", true),
+      // 顺序即优先级：免费层（账号 token 实测可用）排最前，产品面专用层其次
       ...mapTier(data.free, "free", true),
+      ...mapTier(data.clineCloud, "cloud", false).map((m) => ({
+        ...m,
+        note: "仅 Cline 产品面可用；账号 token 调用返回 403 not supported",
+      })),
       ...mapTier(data.clinePass, "pass", false),
       ...mapTier(data.recommended, "paid", true),
     ];
@@ -253,7 +260,13 @@ export async function getModels(env, force = false) {
 export async function resolveModel(env, requested) {
   const cfg = getConfig(env);
   const req = (requested || "").trim();
-  if (!req) return { upstream: cfg.defaultModel, tier: "cloud" };
+  if (!req) return { upstream: cfg.defaultModel, tier: "free" };
+  // cline-cloud/* 是 Cline 产品面专用模型，账号 token 调用会被上游拒绝
+  // （实测 403 "This request is not supported"）。这里自动降级到免费层模型，
+  // 让客户端即使填 cline-cloud/* 也能拿到内容；设 CLOUD_FALLBACK=false 关闭。
+  if (cfg.cloudFallback && req.startsWith("cline-cloud/")) {
+    return { upstream: cfg.defaultModel, tier: "free", cloudFallback: true };
+  }
   const models = await getModels(env);
   const exact = models.find((m) => m.id === req);
   if (exact) return { upstream: exact.id, tier: exact.tier, usable: exact.usable };
@@ -290,7 +303,9 @@ export function upstreamHeaders(accessToken, sessionId, env) {
     "X-CORE-VERSION": coreVersion,
   };
   if (sessionId) headers["X-Task-ID"] = sessionId;
-  if (accessToken) headers.Authorization = "Bearer workos:" + accessToken;
+  const directKey = readEnv(env, "CLINE_API_KEY");
+  if (directKey) headers.Authorization = "Bearer " + directKey; // API Key 不带 workos: 前缀
+  else if (accessToken) headers.Authorization = "Bearer workos:" + accessToken;
   return headers;
 }
 
@@ -315,7 +330,7 @@ function sanitizeBody(body, cfg, notes) {
 
 /** 单次上游调用（含账号获取）；401 时换号重试一次 */
 async function clineFetchOnce(env, cfg, body, sessionId, attempt = 0) {
-  const account = pickAccount(env, cfg);
+  const account = cfg.directApiKey ? null : pickAccount(env, cfg);
   let token = null;
   if (account) {
     try {

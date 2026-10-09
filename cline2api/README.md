@@ -3,7 +3,7 @@
 把 [cline.bot](https://cline.bot) 的模型额度转成**标准 OpenAI / Anthropic 兼容 API**。
 零依赖、单份核心逻辑，**Node / Cloudflare Workers / Vercel Edge / Deno Deploy 四个入口**任选，也能直接上 Docker。
 
-**默认模型：`cline-cloud/deepseek-v4.1-flash`** —— 1M 上下文、带 reasoning、**0 credits**。
+**默认模型：`cline-free/mimo-v2.6-flash`** —— 免费层、0 credits、带 reasoning，账号 token 实测可用。
 
 ```bash
 node server.js
@@ -19,13 +19,18 @@ node server.js
 
 | tier | 前缀 | 实测可用性 |
 |---|---|---|
-| `clineCloud` | `cline-cloud/` | ✅ **可用且 0 credits** —— 当前只有 `cline-cloud/deepseek-v4.1-flash` 一个模型 |
-| `free` | `cline-free/` | ✅ 免费（`mimo-v2.6-flash` / `muse-spark-1.3-contributor` / `step-5-preview` / `solar-mini4`） |
+| `clineCloud` | `cline-cloud/` | ❌ **账号 token 调不了**（`403 This request is not supported`）—— 属于 Cline 产品面（网页版/插件 UI）专用；本项目会**自动降级**到免费层模型 |
+| `free` | `cline-free/` | ✅ **账号 token 实测可用**（`mimo-v2.6-flash` / `muse-spark-1.3-contributor` / `step-5-preview` / `solar-mini4`） |
 | `clinePass` | `cline-pass/` | ❌ 未订阅返回 `403 ENTITLEMENT_ERROR: the user is not subscribed to required model plan` |
 | `recommended` | 各家原厂前缀 | 付费/自带额度，按账号余额 |
 
-> ⚠️ `cline-cloud/` **不是付费档**，只是 Cline 自家托管通道的命名前缀。
-> 用 `credits used = 0.0000` 即可验证（Cline 后台 MY USAGE 页面）。
+> ⚠️ 关于 `cline-cloud/deepseek-v4.1-flash`：它在 Cline 后台 MY USAGE 里确实显示 `0.0000 credits`，
+> 但那**只是产品面（网页版/插件）的用量**。用 refreshToken 换来的账号 token 去调它，上游返回
+> `403 This request is not supported`（实测：同一 token 调 `anthropic/claude-sonnet-5.5` 和
+> `cline-free/mimo-v2.6-flash` 都是 200，只有 `cline-cloud/*` 403）。
+> 所以自部署场景下**免费可用面 = `cline-free/*` 那 4 个模型**；请求 `cline-cloud/*` 时本项目
+> 自动降级到免费层模型（设 `CLOUD_FALLBACK=false` 可关闭）。
+> 想自己复现这个结论：`node debug-token.js`。
 >
 > ⚠️ 这些 `cline-*` 模型 ID **不在**公开的 `GET /api/v1/models`（467 个）里，
 > 只能从 `recommended-models` 拿——所以任何 2api 都必须读这个接口。
@@ -107,7 +112,7 @@ curl http://127.0.0.1:8787/v1/health
 
 curl http://127.0.0.1:8787/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"cline-cloud/deepseek-v4.1-flash","messages":[{"role":"user","content":"你好"}]}'
+  -d '{"model":"cline-free/mimo-v2.6-flash","messages":[{"role":"user","content":"你好"}]}'
 ```
 
 端到端自测（真实请求上游，28 项）：
@@ -125,7 +130,7 @@ bash test/smoke.sh
 ```text
 Base URL : http://<你的地址>:8787/v1     （OpenAI 兼容；Anthropic 客户端去掉 /v1 由 SDK 自己拼）
 API Key  : <你设的 API_KEY>（没设就随便填一个非空值）
-Model    : cline-cloud/deepseek-v4.1-flash
+Model    : cline-free/mimo-v2.6-flash
 ```
 
 | 客户端 | 配置要点 |
@@ -134,7 +139,7 @@ Model    : cline-cloud/deepseek-v4.1-flash
 | Cherry Studio / NextChat / LobeChat | 供应商选"OpenAI 兼容"，填上面 Base URL + Key + 模型 |
 | Claude Code | `ANTHROPIC_BASE_URL=http://127.0.0.1:8787` + `ANTHROPIC_AUTH_TOKEN=<API_KEY>`（走 `/v1/messages`） |
 | Cursor / Continue 等硬编码模型名的客户端 | 打开 `FALLBACK_TO_DEFAULT`（默认已开），随便填模型名都能用 |
-| New API / one-api 中转 | 渠道类型选 OpenAI，Base URL 填 `/v1`，模型名填 `cline-cloud/deepseek-v4.1-flash` |
+| New API / one-api 中转 | 渠道类型选 OpenAI，Base URL 填 `/v1`，模型名填 `cline-free/mimo-v2.6-flash` |
 
 > `GET /v1/models` 返回三层模型列表，`usable: false` 表示需要 cline-pass 订阅。
 
