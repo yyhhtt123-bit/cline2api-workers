@@ -446,6 +446,7 @@ Model:    cline-cloud/deepseek-v4.1-flash   （默认，免费）
 ├── vercel.json             # Vercel 路由重写：/v1/* → /api/index
 ├── wrangler.toml           # CF 命令行部署配置（用复制代码方式可忽略）
 ├── cline_oauth.py          # 获取 CLINE_REFRESH_TOKEN 的脚本 ⭐
+├── local-server.mjs        # 本地/VPS 运行入口（把 worker.js 包成普通 Node 服务）
 ├── tests/smoke.mjs         # 冒烟测试（stub 上游，不联网，node tests/smoke.mjs）
 ├── tests/live.mjs          # 真实链路测试（真连 api.cline.bot，无需 token，node tests/live.mjs）
 ├── .github/workflows/
@@ -455,6 +456,33 @@ Model:    cline-cloud/deepseek-v4.1-flash   （默认，免费）
 ```
 
 > ⚠️ `worker.js` 与 `api/index.js` **逻辑同源**：改功能时两份都要同步改（否则 CF 与 Vercel 行为会不一致）。
+
+### 上游按出口 IP 拒绝时：在 VPS / 本机跑（local-server.mjs）⭐
+
+2026-10-10 实测：**同一个 refreshToken、同一个请求，换个出口就结果不同**：
+
+| 请求出口 | 结果 |
+|---|---|
+| Google Cloud 主机（`34.67.x.x`） | ✅ 200（非流式/流式都正常） |
+| Cloudflare Workers 出口 | ❌ 403 `This request is not supported.`（带不带账号 token 都一样） |
+| 家用宽带 | ❌ 401 `Unauthorized ... re-authenticate your Cline account` |
+
+所以 CF 部署在某些网络环境下会报错。这时把服务跑在一台**上游放行的机器**上即可（实测 Google Cloud 出口可以）：
+
+```bash
+# Linux / macOS / VPS
+CLINE_REFRESH_TOKEN=xxx API_KEY=sk-cline-123 node local-server.mjs
+```
+```cmd
+REM Windows CMD
+set CLINE_REFRESH_TOKEN=xxx
+set API_KEY=sk-cline-123
+node local-server.mjs
+```
+
+客户端 Base URL 填 `http://<那台机器>:8787/v1`（`PORT` 可改）。它内部就是这份 `worker.js`，所以行为一致。
+
+> ⚠️ 这个服务没有 TLS，别裸奔在公网；要跑在服务器上请套 Nginx/Caddy 加 HTTPS 与访问控制。
 
 ### 本地冒烟测试（改完代码先跑这个）
 
